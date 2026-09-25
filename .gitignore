@@ -1,0 +1,13 @@
+# secrets - never commit
+.env
+.env.*
+!.env.example
+
+# run state
+runtime/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/

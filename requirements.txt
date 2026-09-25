@@ -1,0 +1,2 @@
+# Runtime dependencies: none. lobster is stdlib-only (urllib, argparse, json).
+# Dev/test: stdlib unittest. No install needed beyond Python 3.10+.

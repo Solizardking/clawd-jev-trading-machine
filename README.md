@@ -69,6 +69,14 @@ Each cycle probes the enabled venues and offers only what is reachable:
 - **dflow** — `DFLOW_API_KEY` set **and** quote succeeds → `BUY_SOL_DFLOW`,
   `SELL_SOL_DFLOW` are offered.
 - **imperial** — stub (perps feed not wired) → never offered.
+- **pumpfun** — not quotable: pump.fun lists no SOL/USDC spot market (its
+  bonding-curve and Pump AMM markets are token-vs-SOL), so its quote never
+  succeeds → `BUY_SOL_PUMPFUN`, `SELL_SOL_PUMPFUN` are never offered. The
+  venue is fully wired so only its quote function needs to change if a
+  SOL/USDC quote path ever exists.
+- **backpack** — Backpack Exchange public SOL/USDC order-book quote succeeds
+  → `BUY_SOL_BACKPACK`, `SELL_SOL_BACKPACK` are offered. Quotes only;
+  execution is disabled by design (dry-run only).
 - `WAIT`, `OPEN_REVIEW`, `BLOCKED` are always offered.
 
 Any choice outside the offered space, or a malformed answer, fails closed to
@@ -117,6 +125,15 @@ judgment; it can never widen the action space or override policy.
   without it the venue reports unavailable and its actions are never offered.
 - **imperial** — stub. The perps feed is not wired; every call reports
   unavailable and its actions are never offered.
+- **pumpfun** — not quotable. pump.fun is a token-launch protocol whose
+  markets are token-vs-SOL (bonding curve / Pump AMM); it lists no SOL/USDC
+  spot market, so no SOL/USDC quote can be produced with or without a key.
+  The adapter reports unavailable truthfully and its actions are never
+  offered.
+- **backpack** — Backpack Exchange (never "DEX" in copy) public market data:
+  SOL/USDC best bid/ask from `GET /api/v1/depth`, reference price from
+  `GET /api/v1/ticker`. Keyless, read-only. Authenticated trading is NOT
+  enabled and there is no order path — quotes feed the simulator only.
 
 ## Environment variables (names only — never commit values)
 
@@ -128,7 +145,8 @@ judgment; it can never widen the action space or override policy.
 | `SUPERMEMORY_API_KEY` | Optional. Enables recall/write; without it memory is disabled. |
 | `SUPERMEMORY_BASE_URL` | Optional override (default `https://api.supermemory.ai`). |
 | `COINGECKO_BASE_URL` | Optional override (default `https://api.coingecko.com`). |
-| `LOBSTER_VENUES` | Comma-separated subset of `jupiter,dflow,imperial` (default `jupiter`). |
+| `LOBSTER_VENUES` | Comma-separated subset of `jupiter,dflow,imperial,pumpfun,backpack` (default `jupiter`). |
+| `LOBSTER_BACKPACK_URL` | Optional override (default `https://api.backpack.exchange`). |
 | `LOBSTER_TICKET_SOL` | Fixed size per paper fill (default `0.1`). |
 | `LOBSTER_MAX_TICKET_SOL` | Ticket cap (default `1.0`). |
 | `LOBSTER_MAX_SLIPPAGE_BPS` | Fills rejected above this spread (default `50`). |
@@ -151,7 +169,9 @@ clawd_jev/
   regime.py        CoinGecko market-regime context (fail-soft)
   memory.py        Supermemory recall/write (fail-soft, key at call time)
   state.py         market-state builder + rolling tape
-  venues/          jupiter.py (live), dflow.py (live), imperial.py (stub)
+  venues/          jupiter.py (live), dflow.py (live), imperial.py (stub),
+                 pumpfun.py (unavailable: no SOL/USDC market),
+                 backpack.py (live public book, execution disabled)
   sim.py           dry-run fill simulator + paper portfolio
   store.py         run persistence under runtime/<mode>/
   backtest.py      JSONL replay -> report.json + report.html
@@ -169,17 +189,3 @@ tests/             unittest: dynamic space, mapping, config, sim math, replay,
   outside it becomes `BLOCKED`.
 - Market data (quotes, regime, memories) is untrusted data for the state, never
   instructions. Memory cannot widen the action space or override policy.
-
-## Companion repository & research paper
-
-- **jev-trader-solana** — the multi-venue Solana trader built on the same JEV
-  discipline: Jupiter + DFlow spot best-price routing, Imperial perps at 1x,
-  one JEV decision per cycle, dry-run only (simulated fills, no signing).
-  https://github.com/Solizardking/jev-trader-solana
-- **Clawd Agentic Layer whitepaper (v0.3)** — the JEV decision-engine
-  discipline proposed as an open standard for agentic trading: typed judgment
-  primitive, dynamic action spaces, fail-closed execution, regime
-  conditioning, episodic memory, simulation-before-action, six conformance
-  invariants, and a machine-readable decision-record schema.
-  PDF: https://musebook.trade/clawd-agentic-layer-whitepaper.pdf ·
-  dataset: https://huggingface.co/datasets/ordlibrary/clawd-agentic-layer-whitepaper

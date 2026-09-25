@@ -21,9 +21,11 @@ from .state import Tape, build_state, render
 from .store import append_jsonl, new_run_dir, write_json
 from .typesafe import JevError, ask as typesafe_ask
 from .venues import Quote
+from .venues import backpack as backpack_venue
 from .venues import dflow as dflow_venue
 from .venues import imperial as imperial_venue
 from .venues import jupiter as jupiter_venue
+from .venues import pumpfun as pumpfun_venue
 
 
 def load_dotenv(path: str | None) -> None:
@@ -61,6 +63,11 @@ def fetch_all_quotes(config: Config) -> dict:
             ref_price_usd=ref, timeout=12.0)
     if "imperial" in config.venues:
         quotes["imperial"] = imperial_venue.get_quote()
+    if "backpack" in config.venues:
+        quotes["backpack"] = backpack_venue.get_quote(
+            config.quote_size_sol, base_url=config.backpack_base_url, timeout=12.0)
+    if "pumpfun" in config.venues:
+        quotes["pumpfun"] = pumpfun_venue.get_quote()
     return quotes
 
 
@@ -100,6 +107,19 @@ def cmd_doctor(args, config: Config) -> int:
             checks.append(_check("dflow", "warn", f"unavailable: {dq.error}"))
     if "imperial" in config.venues:
         checks.append(_check("imperial", "warn", "stub - perps feed not wired"))
+    bq = quotes.get("backpack")
+    if bq is not None:
+        if bq.ok:
+            checks.append(_check("backpack", "ok",
+                                 f"SOL bid {bq.bid:.4f} / ask {bq.ask:.4f} USDC "
+                                 f"(spread {bq.spread_bps:.1f}bps; public book - "
+                                 f"execution disabled, dry-run only)"))
+        else:
+            checks.append(_check("backpack", "warn", f"unreachable: {bq.error}"))
+    if "pumpfun" in config.venues:
+        checks.append(_check("pumpfun", "warn",
+                             "no SOL/USDC spot market on pump.fun "
+                             "(tokens trade vs SOL) - venue unavailable"))
 
     actions = offered_actions(quotes)
     checks.append(_check("action-space", "ok",

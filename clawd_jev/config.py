@@ -15,7 +15,7 @@ class ConfigError(Exception):
     """Raised when configuration is missing or out of range."""
 
 
-ALLOWED_VENUES = ("jupiter", "dflow", "imperial")
+ALLOWED_VENUES = ("jupiter", "dflow", "imperial", "pumpfun", "backpack")
 
 
 def _str(name: str, default: str) -> str:
@@ -50,6 +50,7 @@ class Config:
     jupiter_base_url: str = "https://lite-api.jup.ag"
     dflow_base_url: str = "https://quote-api.dflow.net"
     dflow_key_present: bool = False
+    backpack_base_url: str = "https://api.backpack.exchange"
     coingecko_base_url: str = "https://api.coingecko.com"
     coingecko_key_present: bool = False
     supermemory_base_url: str = "https://api.supermemory.ai"
@@ -77,6 +78,7 @@ class Config:
             jupiter_base_url=_str("LOBSTER_JUPITER_URL", "https://lite-api.jup.ag").rstrip("/"),
             dflow_base_url=_str("LOBSTER_DFLOW_URL", "https://quote-api.dflow.net").rstrip("/"),
             dflow_key_present=bool(os.environ.get("DFLOW_API_KEY")),
+            backpack_base_url=_str("LOBSTER_BACKPACK_URL", "https://api.backpack.exchange").rstrip("/"),
             coingecko_base_url=_str("COINGECKO_BASE_URL", "https://api.coingecko.com").rstrip("/"),
             coingecko_key_present=bool(os.environ.get("COINGECKO_API_KEY")),
             supermemory_base_url=_str("SUPERMEMORY_BASE_URL", "https://api.supermemory.ai").rstrip("/"),
@@ -95,6 +97,7 @@ class Config:
         if not self.decision_model:
             raise ConfigError("LOBSTER_DECISION_MODEL must not be empty")
         for attr in ("typesafe_base_url", "jupiter_base_url", "dflow_base_url",
+                     "backpack_base_url",
                      "coingecko_base_url", "supermemory_base_url", "rpc_url"):
             url = getattr(self, attr)
             if not (url.startswith("http://") or url.startswith("https://")):

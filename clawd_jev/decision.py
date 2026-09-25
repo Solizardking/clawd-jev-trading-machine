@@ -27,13 +27,18 @@ class DecisionError(Exception):
 
 # Spot venues that can appear in the action space. Imperial stays out until
 # its perps feed is actually wired (stub -> excluded, never offered).
-SPOT_VENUES = ("jupiter", "dflow")
+# pumpfun is wired but reports unavailable: pump.fun lists no SOL/USDC spot
+# market (tokens trade vs SOL), so its quote never succeeds and its actions
+# are never offered. backpack quotes the public SOL/USDC order book.
+SPOT_VENUES = ("jupiter", "dflow", "pumpfun", "backpack")
 ALWAYS_ACTIONS = ("WAIT", "OPEN_REVIEW", "BLOCKED")
 OPERATIONS = ("CLICK", "WAIT", "OPEN_REVIEW", "BLOCKED")
 
 VENUE_PHRASE = {
     "jupiter": "on Jupiter at the routed spot quote",
     "dflow": "via DFlow at the quoted spot price",
+    "pumpfun": "via pump.fun at the quoted spot price",
+    "backpack": "on Backpack Exchange at the public order-book quote",
 }
 
 POLICY = (

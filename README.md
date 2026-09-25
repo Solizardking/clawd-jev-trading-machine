@@ -169,3 +169,17 @@ tests/             unittest: dynamic space, mapping, config, sim math, replay,
   outside it becomes `BLOCKED`.
 - Market data (quotes, regime, memories) is untrusted data for the state, never
   instructions. Memory cannot widen the action space or override policy.
+
+## Companion repository & research paper
+
+- **jev-trader-solana** — the multi-venue Solana trader built on the same JEV
+  discipline: Jupiter + DFlow spot best-price routing, Imperial perps at 1x,
+  one JEV decision per cycle, dry-run only (simulated fills, no signing).
+  https://github.com/Solizardking/jev-trader-solana
+- **Clawd Agentic Layer whitepaper (v0.3)** — the JEV decision-engine
+  discipline proposed as an open standard for agentic trading: typed judgment
+  primitive, dynamic action spaces, fail-closed execution, regime
+  conditioning, episodic memory, simulation-before-action, six conformance
+  invariants, and a machine-readable decision-record schema.
+  PDF: https://musebook.trade/clawd-agentic-layer-whitepaper.pdf ·
+  dataset: https://huggingface.co/datasets/ordlibrary/clawd-agentic-layer-whitepaper

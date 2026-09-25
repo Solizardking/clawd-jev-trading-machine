@@ -33,7 +33,8 @@ GOAL = (
 
 
 def build_state(*, cycle: int, quotes: dict, tape: Tape, config, mock: bool,
-               regime: dict | None = None, memory: dict | None = None) -> dict:
+               regime: dict | None = None, memory: dict | None = None,
+               token_quotes: dict | None = None) -> dict:
     market = {}
     for name, q in quotes.items():
         market[name] = {
@@ -46,6 +47,20 @@ def build_state(*, cycle: int, quotes: dict, tape: Tape, config, mock: bool,
             "stale": q.is_stale(config.quote_stale_s),
             "age_s": round(q.age_s(), 1) if q.ok else None,
             "error": q.error,
+        }
+    token_market = {}
+    for tag, tq in (token_quotes or {}).items():
+        token_market[tag] = {
+            "mint": tq.mint,
+            "symbol": tq.symbol,
+            "price_sol": tq.price_sol,
+            "price_usd": tq.price_usd,
+            "ok": tq.ok,
+            "stale": tq.is_stale(config.quote_stale_s),
+            "age_s": round(tq.age_s(), 1) if tq.ok else None,
+            "error": tq.error,
+            "note": "indicative token-vs-SOL mid from keyless reference feed; "
+                    "no order-book spread; pump.fun has no SOL/USDC market",
         }
     return {
         "mode": "paper-dry-run",
@@ -60,6 +75,7 @@ def build_state(*, cycle: int, quotes: dict, tape: Tape, config, mock: bool,
             "fail_closed": "invalid or missing JEV output becomes BLOCKED; no fill",
         },
         "market": market,
+        "token_market": token_market,
         "tape": {"lookback": len(tape), "ret_bps": tape.ret_bps()},
         "regime": regime if regime is not None else {
             "status": "unavailable", "regime": "UNKNOWN",

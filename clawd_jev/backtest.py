@@ -15,9 +15,10 @@ import time
 from pathlib import Path
 
 from .decision import Decision
-from .sim import Portfolio, mark_to_market, simulate
+from .sim import Portfolio, mark_to_market, parse_token_target, simulate
 from .store import new_run_dir, write_json
 from .venues import Quote
+from .venues.pumpfun import TokenQuote
 
 BANNER = ("Replay of recorded paper decisions - simulated fills only. "
           "Not live trading; not a profitability claim.")
@@ -39,6 +40,22 @@ def _quote_from(record: dict, venue: str) -> Quote | None:
         ok=bool(q.get("ok")),
         error=q.get("error"),
     )
+
+
+def _token_quotes_from(record: dict) -> dict:
+    """Restore recorded pump.fun token quotes, keyed by tag."""
+    out = {}
+    for tag, d in (record.get("token_quotes") or {}).items():
+        if isinstance(d, dict):
+            out[tag] = TokenQuote.from_dict(d)
+    return out
+
+
+def _token_tag_of(target_id: str | None) -> str | None:
+    try:
+        return parse_token_target(target_id)[1]
+    except (ValueError, TypeError):
+        return None
 
 
 def _venue_of(target_id: str | None) -> str | None:
@@ -77,11 +94,15 @@ def replay(decisions_path, config) -> Path:
         )
         venue = _venue_of(decision.target_id)
         quotes = {}
+        token_quotes = {}
         if venue:
             q = _quote_from(rec, venue)
             if q is not None:
                 quotes[venue] = q
-        fill = simulate(decision, quotes, portfolio, config, rec.get("cycle", i + 1))
+        if _token_tag_of(decision.target_id):
+            token_quotes = _token_quotes_from(rec)
+        fill = simulate(decision, quotes, portfolio, config, rec.get("cycle", i + 1),
+                        token_quotes=token_quotes)
         fills.append(fill.to_dict())
 
     ref_mid = None
@@ -90,7 +111,13 @@ def replay(decisions_path, config) -> Path:
         if isinstance(m, (int, float)) and m > 0:
             ref_mid = m
             break
-    mtm = mark_to_market(portfolio, ref_mid)
+    last_token_quotes = {}
+    for ln in reversed(lines):
+        tq = _token_quotes_from(json.loads(ln))
+        if tq:
+            last_token_quotes = {t.mint: t for t in tq.values() if t.ok}
+            break
+    mtm = mark_to_market(portfolio, ref_mid, token_quotes=last_token_quotes)
     report = {
         "banner": BANNER,
         "source": str(path),
@@ -111,6 +138,12 @@ def replay(decisions_path, config) -> Path:
 def _render_html(report: dict) -> str:
     rows = []
     for f in report["fills"]:
+        if f.get("price_usdc") is not None:
+            price = f["price_usdc"]
+        elif f.get("price_sol") is not None:
+            price = f"{f['price_sol']:.8f} SOL/{f.get('token_symbol') or '?'}"
+        else:
+            price = "-"
         rows.append(
             "<tr><td>{cycle}</td><td>{venue}</td><td>{side}</td>"
             "<td>{status}</td><td>{size_sol}</td><td>{price}</td>"
@@ -118,11 +151,14 @@ def _render_html(report: dict) -> str:
                 cycle=f["cycle"], venue=html.escape(str(f["venue"])),
                 side=html.escape(str(f["side"])), status=html.escape(f["status"]),
                 size_sol=f["size_sol"],
-                price=f["price_usdc"], notional=f["notional_usdc"], fee=f["fee_usdc"],
+                price=html.escape(str(price)), notional=f["notional_usdc"], fee=f["fee_usdc"],
                 reason=html.escape(f["reason"]),
             )
         )
     mtm = report["mark_to_market"] or {}
+    tokens = report["portfolio"].get("tokens") or {}
+    tok_txt = (", ".join(f"{m[:8]}...: {a:g}" for m, a in tokens.items())
+               if tokens else "none")
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>clawd-jev backtest replay</title>
 <style>body{{font-family:system-ui,sans-serif;max-width:1100px;margin:2em auto;padding:0 1em}}
@@ -135,6 +171,7 @@ Source: {html.escape(report["source"])} &middot; Cycles: {report["cycles"]} &mid
 Filled: {report["filled"]} &middot; Rejected: {report["rejected"]} &middot; Skipped: {report["skipped"]}</p>
 <h2>Paper portfolio</h2>
 <p>USDC {report["portfolio"]["usdc"]} &middot; SOL {report["portfolio"]["sol"]}
+&middot; Tokens {tok_txt}
 &middot; Mark-to-market total {mtm.get("total_usdc")} USDC
 (PnL {mtm.get("pnl_usdc")} USDC, {mtm.get("pnl_pct")}%)</p>
 <h2>Fills</h2>

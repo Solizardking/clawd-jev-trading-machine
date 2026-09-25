@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+from .venues.pumpfun import valid_mint as _valid_pumpfun_mint
+
+
 class ConfigError(Exception):
     """Raised when configuration is missing or out of range."""
 
@@ -51,6 +54,8 @@ class Config:
     dflow_base_url: str = "https://quote-api.dflow.net"
     dflow_key_present: bool = False
     backpack_base_url: str = "https://api.backpack.exchange"
+    pumpfun_tokens: tuple = ()
+    pumpfun_quote_url: str = "https://api.dexscreener.com"
     coingecko_base_url: str = "https://api.coingecko.com"
     coingecko_key_present: bool = False
     supermemory_base_url: str = "https://api.supermemory.ai"
@@ -61,6 +66,9 @@ class Config:
     def from_env(cls) -> "Config":
         venues_raw = os.environ.get("LOBSTER_VENUES", "jupiter")
         venues = tuple(v.strip().lower() for v in venues_raw.split(",") if v.strip())
+        tokens_raw = os.environ.get("LOBSTER_PUMPFUN_TOKENS", "")
+        pumpfun_tokens = tuple(
+            t.strip() for t in tokens_raw.split(",") if t.strip())
         cfg = cls(
             decision_model=_str("LOBSTER_DECISION_MODEL", "jev-latest"),
             typesafe_base_url=_str("LOBSTER_TYPESAFE_URL", "https://api.typesafe.ai").rstrip("/"),
@@ -79,6 +87,8 @@ class Config:
             dflow_base_url=_str("LOBSTER_DFLOW_URL", "https://quote-api.dflow.net").rstrip("/"),
             dflow_key_present=bool(os.environ.get("DFLOW_API_KEY")),
             backpack_base_url=_str("LOBSTER_BACKPACK_URL", "https://api.backpack.exchange").rstrip("/"),
+            pumpfun_tokens=pumpfun_tokens,
+            pumpfun_quote_url=_str("LOBSTER_PUMPFUN_QUOTE_URL", "https://api.dexscreener.com").rstrip("/"),
             coingecko_base_url=_str("COINGECKO_BASE_URL", "https://api.coingecko.com").rstrip("/"),
             coingecko_key_present=bool(os.environ.get("COINGECKO_API_KEY")),
             supermemory_base_url=_str("SUPERMEMORY_BASE_URL", "https://api.supermemory.ai").rstrip("/"),
@@ -94,10 +104,17 @@ class Config:
         for v in self.venues:
             if v not in ALLOWED_VENUES:
                 raise ConfigError(f"unknown venue {v!r}; allowed: {', '.join(ALLOWED_VENUES)}")
+        for t in self.pumpfun_tokens:
+            if not _valid_pumpfun_mint(t):
+                raise ConfigError(
+                    f"LOBSTER_PUMPFUN_TOKENS has invalid mint {t!r}; "
+                    "expected comma-separated base58 Solana mint addresses")
+        if len(set(self.pumpfun_tokens)) != len(self.pumpfun_tokens):
+            raise ConfigError("LOBSTER_PUMPFUN_TOKENS has duplicate mints")
         if not self.decision_model:
             raise ConfigError("LOBSTER_DECISION_MODEL must not be empty")
         for attr in ("typesafe_base_url", "jupiter_base_url", "dflow_base_url",
-                     "backpack_base_url",
+                     "backpack_base_url", "pumpfun_quote_url",
                      "coingecko_base_url", "supermemory_base_url", "rpc_url"):
             url = getattr(self, attr)
             if not (url.startswith("http://") or url.startswith("https://")):
@@ -130,6 +147,7 @@ class Config:
             "coingecko_key_present": self.coingecko_key_present,
             "supermemory_key_present": self.supermemory_key_present,
             "venues": list(self.venues),
+            "pumpfun_tokens": list(self.pumpfun_tokens),
             "ticket_sol": self.ticket_sol,
             "max_ticket_sol": self.max_ticket_sol,
             "max_slippage_bps": self.max_slippage_bps,

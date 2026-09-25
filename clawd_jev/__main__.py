@@ -71,10 +71,41 @@ def fetch_all_quotes(config: Config) -> dict:
     return quotes
 
 
-def offered_actions(quotes: dict) -> tuple:
-    """Dynamic action space: only venues with a fresh, ok quote this cycle."""
+def fetch_pumpfun_tokens(config: Config) -> dict:
+    """Token-vs-SOL indicative quotes, keyed by deterministic tag.
+
+    Empty unless the pumpfun venue is enabled AND LOBSTER_PUMPFUN_TOKENS
+    names at least one mint. Fail-soft per token.
+    """
+    if "pumpfun" not in config.venues or not config.pumpfun_tokens:
+        return {}
+    return pumpfun_venue.get_token_quotes(
+        config.pumpfun_tokens, base_url=config.pumpfun_quote_url, timeout=12.0)
+
+
+def token_info_for(token_quotes: dict) -> dict:
+    """Criteria info per pump.fun token action id (ok quotes only)."""
+    info = {}
+    for tag, tq in token_quotes.items():
+        if not tq.ok:
+            continue
+        for side in ("BUY", "SELL"):
+            info[f"{side}_{tag}_PUMPFUN"] = {
+                "tag": tag,
+                "symbol": tq.symbol,
+                "mint": tq.mint,
+                "price_sol": tq.price_sol,
+                "price_usd": tq.price_usd,
+            }
+    return info
+
+
+def offered_actions(quotes: dict, token_quotes: dict | None = None) -> tuple:
+    """Dynamic action space: venues with a fresh ok quote, plus pump.fun
+    token tags with a fresh ok indicative quote."""
     available = tuple(sorted(n for n, q in quotes.items() if q.ok))
-    return offer_actions(available)
+    tags = tuple(sorted(t for t, tq in (token_quotes or {}).items() if tq.ok))
+    return offer_actions(available, token_tags=tags)
 
 
 def cmd_doctor(args, config: Config) -> int:
@@ -116,12 +147,28 @@ def cmd_doctor(args, config: Config) -> int:
                                  f"execution disabled, dry-run only)"))
         else:
             checks.append(_check("backpack", "warn", f"unreachable: {bq.error}"))
+    pumpfun_tokens = {}
     if "pumpfun" in config.venues:
-        checks.append(_check("pumpfun", "warn",
-                             "no SOL/USDC spot market on pump.fun "
-                             "(tokens trade vs SOL) - venue unavailable"))
+        pumpfun_tokens = fetch_pumpfun_tokens(config)
+        if not config.pumpfun_tokens:
+            checks.append(_check(
+                "pumpfun", "warn",
+                "no SOL/USDC spot market on pump.fun; "
+                "LOBSTER_PUMPFUN_TOKENS empty - token-vs-SOL venue unavailable"))
+        else:
+            for tag, tq in pumpfun_tokens.items():
+                if tq.ok:
+                    usd = f" (~${tq.price_usd:.4f})" if tq.price_usd else ""
+                    checks.append(_check(
+                        "pumpfun:" + tag, "ok",
+                        f"{tq.symbol or tag}: {tq.price_sol:.8f} SOL/token{usd} "
+                        f"(indicative mid, dry-run only)"))
+                else:
+                    checks.append(_check(
+                        "pumpfun:" + tag, "warn",
+                        f"{tq.mint[:8]}...: {tq.error}"))
 
-    actions = offered_actions(quotes)
+    actions = offered_actions(quotes, pumpfun_tokens)
     checks.append(_check("action-space", "ok",
                          f"{len(actions)} offered: {', '.join(actions)}"))
 
@@ -182,13 +229,16 @@ def cmd_paper(args, config: Config) -> int:
 
     for cycle in range(1, args.iterations + 1):
         quotes = fetch_all_quotes(config)
+        token_quotes = fetch_pumpfun_tokens(config)
         jq = quotes.get("jupiter")
         if jq is not None and jq.mid:
             tape.add(jq.mid)
             last_mid = jq.mid
-        # Dynamic action space: only venues with a fresh quote this cycle.
-        actions = offered_actions(quotes)
-        questions = build_questions(config.ticket_sol, actions)
+        # Dynamic action space: venues with a fresh quote this cycle, plus
+        # pump.fun token tags with a fresh indicative quote.
+        actions = offered_actions(quotes, token_quotes)
+        questions = build_questions(config.ticket_sol, actions,
+                                    token_info_for(token_quotes))
         allowed = frozenset(actions)
         # Memory recall before the JEV call; labeled honestly when disabled.
         mem = memory_mod.recall(
@@ -199,7 +249,8 @@ def cmd_paper(args, config: Config) -> int:
                             config=config, mock=mock, regime=regime,
                             memory={"enabled": mem["enabled"],
                                     "memories": mem["memories"],
-                                    "error": mem["error"]})
+                                    "error": mem["error"]},
+                            token_quotes=token_quotes)
         try:
             if mock:
                 res = ask_fn(render(state), questions)
@@ -214,14 +265,21 @@ def cmd_paper(args, config: Config) -> int:
             decision = Decision("BLOCKED", None, 1.0,
                                 f"fail-closed: {type(e).__name__}: {e}",
                                 model=label, mock=mock)
-        fill = simulate(decision, quotes, portfolio, config, cycle)
-        mtm = mark_to_market(portfolio, jq.mid if jq is not None and jq.ok else None)
+        fill = simulate(decision, quotes, portfolio, config, cycle,
+                        token_quotes=token_quotes)
+        sol_mid = jq.mid if jq is not None and jq.ok else None
+        mtm = mark_to_market(
+            portfolio, sol_mid,
+            token_quotes={tq.mint: tq for tq in token_quotes.values() if tq.ok})
         # Memory write after the simulated outcome (no-op when disabled).
+        tok_txt = ", ".join(f"{m[:6]}:{a:.4f}"
+                            for m, a in portfolio.tokens.items()) or "none"
         mem_write = memory_mod.write(
             f"cycle {cycle}: {decision.operation}"
             f"{' -> ' + decision.target_id if decision.target_id else ''} "
             f"conf={decision.confidence:.2f} fill={fill.status} ({fill.reason}); "
-            f"portfolio {portfolio.usdc:.2f} USDC / {portfolio.sol:g} SOL; "
+            f"portfolio {portfolio.usdc:.2f} USDC / {portfolio.sol:g} SOL / "
+            f"tokens {{{tok_txt}}}; "
             f"{regime_txt}{' [MOCK]' if mock else ''}",
             metadata={"mode": "paper", "mock": mock, "cycle": cycle,
                       "regime": regime["regime"], "decision": decision.operation})
@@ -243,6 +301,8 @@ def cmd_paper(args, config: Config) -> int:
                 "mock": decision.mock,
             },
             "quotes": {name: q.to_dict() for name, q in quotes.items()},
+            "token_quotes": {tag: tq.to_dict()
+                             for tag, tq in token_quotes.items()},
             "fill": fill.to_dict(),
             "portfolio": portfolio.to_dict(),
             "mark_to_market": mtm,
@@ -265,7 +325,8 @@ def cmd_paper(args, config: Config) -> int:
         "mark_to_market": mtm,
         "config": config.redacted_summary(),
     })
-    print(f"done. portfolio: {portfolio.usdc:.2f} USDC / {portfolio.sol:g} SOL")
+    print(f"done. portfolio: {portfolio.usdc:.2f} USDC / {portfolio.sol:g} SOL"
+          + (f" / {len(portfolio.tokens)} token position(s)" if portfolio.tokens else ""))
     print(f"run dir: {run_dir}")
     return 0
 

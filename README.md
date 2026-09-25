@@ -69,11 +69,13 @@ Each cycle probes the enabled venues and offers only what is reachable:
 - **dflow** — `DFLOW_API_KEY` set **and** quote succeeds → `BUY_SOL_DFLOW`,
   `SELL_SOL_DFLOW` are offered.
 - **imperial** — stub (perps feed not wired) → never offered.
-- **pumpfun** — not quotable: pump.fun lists no SOL/USDC spot market (its
-  bonding-curve and Pump AMM markets are token-vs-SOL), so its quote never
-  succeeds → `BUY_SOL_PUMPFUN`, `SELL_SOL_PUMPFUN` are never offered. The
-  venue is fully wired so only its quote function needs to change if a
-  SOL/USDC quote path ever exists.
+- **pumpfun** — token-vs-SOL venue (pump.fun lists no SOL/USDC spot market;
+  its bonding-curve and Pump AMM markets are token-vs-SOL only). Each mint in
+  `LOBSTER_PUMPFUN_TOKENS` gets an indicative token-vs-SOL quote (SOL per
+  token, keyless reference feed) → `BUY_<TAG>_PUMPFUN`, `SELL_<TAG>_PUMPFUN`
+  are offered per token only when its quote succeeds. With no tokens
+  configured the venue stays unavailable, truthfully labeled. Fills are
+  simulated against the indicative quote; dry-run only.
 - **backpack** — Backpack Exchange public SOL/USDC order-book quote succeeds
   → `BUY_SOL_BACKPACK`, `SELL_SOL_BACKPACK` are offered. Quotes only;
   execution is disabled by design (dry-run only).
@@ -125,11 +127,19 @@ judgment; it can never widen the action space or override policy.
   without it the venue reports unavailable and its actions are never offered.
 - **imperial** — stub. The perps feed is not wired; every call reports
   unavailable and its actions are never offered.
-- **pumpfun** — not quotable. pump.fun is a token-launch protocol whose
+- **pumpfun** — token-vs-SOL venue. pump.fun is a token-launch protocol whose
   markets are token-vs-SOL (bonding curve / Pump AMM); it lists no SOL/USDC
-  spot market, so no SOL/USDC quote can be produced with or without a key.
-  The adapter reports unavailable truthfully and its actions are never
-  offered.
+  spot market, so the venue-level SOL/USDC quote always reports unavailable.
+  The real path is per-token: each mint in `LOBSTER_PUMPFUN_TOKENS` is quoted
+  as SOL per token via a keyless reference feed (indicative mid, no
+  order-book spread), and `BUY_<TAG>_PUMPFUN` / `SELL_<TAG>_PUMPFUN` are
+  offered only for tokens with a fresh quote. Unknown/unquoted tokens fail
+  closed. (TAG is the token's deterministic mint-prefix tag — first 6 mint
+  chars, uppercased — not the on-chain symbol, so malformed or colliding
+  symbols can never sneak into the action space.) The paper portfolio tracks
+  per-token balances; SELL fills only
+  against tokens the paper portfolio holds. With no tokens configured the
+  venue reports unavailable truthfully and no token actions are offered.
 - **backpack** — Backpack Exchange (never "DEX" in copy) public market data:
   SOL/USDC best bid/ask from `GET /api/v1/depth`, reference price from
   `GET /api/v1/ticker`. Keyless, read-only. Authenticated trading is NOT
@@ -146,6 +156,8 @@ judgment; it can never widen the action space or override policy.
 | `SUPERMEMORY_BASE_URL` | Optional override (default `https://api.supermemory.ai`). |
 | `COINGECKO_BASE_URL` | Optional override (default `https://api.coingecko.com`). |
 | `LOBSTER_VENUES` | Comma-separated subset of `jupiter,dflow,imperial,pumpfun,backpack` (default `jupiter`). |
+| `LOBSTER_PUMPFUN_TOKENS` | Comma-separated Solana mint addresses for the pump.fun token-vs-SOL universe (default empty → pump.fun unavailable). |
+| `LOBSTER_PUMPFUN_QUOTE_URL` | Optional override (default `https://api.dexscreener.com`). |
 | `LOBSTER_BACKPACK_URL` | Optional override (default `https://api.backpack.exchange`). |
 | `LOBSTER_TICKET_SOL` | Fixed size per paper fill (default `0.1`). |
 | `LOBSTER_MAX_TICKET_SOL` | Ticket cap (default `1.0`). |
@@ -170,7 +182,7 @@ clawd_jev/
   memory.py        Supermemory recall/write (fail-soft, key at call time)
   state.py         market-state builder + rolling tape
   venues/          jupiter.py (live), dflow.py (live), imperial.py (stub),
-                 pumpfun.py (unavailable: no SOL/USDC market),
+                 pumpfun.py (token-vs-SOL quotes; no SOL/USDC market),
                  backpack.py (live public book, execution disabled)
   sim.py           dry-run fill simulator + paper portfolio
   store.py         run persistence under runtime/<mode>/
